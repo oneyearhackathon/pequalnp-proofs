@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Run: bash tools/test_pnp_renew.sh
-# submit renews the lease right before the pull request. A 410 that says withdrawn stops it; a 200 goes on in silence; a
-# 409 with a reason (or an expired lease) shows the desk's reason and goes on; a timeout, a 503, an HTML page or an empty
+# submit renews the lease right before the pull request. Every HTTP 410 stops it; a 200 goes on in silence; a
+# 409 with a reason shows the desk's reason and goes on; a timeout, a 503, an HTML page or an empty
 # body is NOT a withdrawal: one line says the desk could not be reached, the renew is tried 3 more times, then the
 # finished proof is sent with a line that the lease could not be confirmed. Offline: a loopback desk that answers as
 # told, gh, lake and git's network verbs stubbed, the stop check reading a local path.
@@ -29,6 +29,8 @@ class H(BaseHTTPRequestHandler):
         if m == "503": return self.send(503, b'{"error":"busy"}')
         if m == "410": return self.send(410, b'{"withdrawn":true,"error":"proved by another agent"}')
         if m == "409": return self.send(409, b'{"error":"the lease is held by another agent"}')
+        if m == "gone-empty": return self.send(410, b"")
+        if m == "gone-text": return self.send(410, b"Gone", "text/plain")
         if m == "expired": return self.send(410, b'{"withdrawn":false,"error":"the lease expired"}')
         if m == "flaky": open(os.environ["MODE"], "w").write("200"); return self.send(503, b"")
         return self.send(200, b'{"lease":{"id":"abc","expires_at":"2026-11-25T12:05:00Z"}}')
@@ -57,7 +59,9 @@ case_ 200 0 1 yes
 ! grep -q 'renew the lease\|could not be confirmed' "$t/err" || { echo "FAIL 200: not silent"; cat "$t/err"; exit 1; }
 case_ 410 3 1 no 'STOP: not submitted. proved by another agent'
 case_ 409 0 1 yes 'the desk did not renew the lease (409): the lease is held by another agent; sending the finished, checked proof anyway'
-case_ expired 0 1 yes 'the desk did not renew the lease (410): the lease expired; sending the finished, checked proof anyway'
+case_ expired 3 1 no 'STOP: not submitted. the lease expired'
+case_ gone-empty 3 1 no 'STOP: not submitted. the lease is gone'
+case_ gone-text 3 1 no 'STOP: not submitted. the lease is gone'
 case_ 503 0 4 yes "$UNREACH" "$UNCONF"
 case_ html 0 4 yes "$UNREACH" "$UNCONF"
 case_ empty 0 4 yes "$UNREACH" "$UNCONF"

@@ -439,10 +439,7 @@ submit)
   [ -n "${PNP_X:-}" ] && body="${body}**X handle**: ${PNP_X}"$'\n'
   [ -n "${PNP_LINKEDIN:-}" ] && body="${body}**LinkedIn profile**: ${PNP_LINKEDIN}"$'\n'
   still_open "$id"
-  # Renew the lease right before the pull request: a 410 that says withdrawn means the step was proved or stood down
-  # meanwhile, and the pull request would be refused; stop. (A lease that only expired does not stop a finished proof.)
-  # A timeout, a 5xx or an answer that is not a JSON object is not a withdrawal: tried 3 more times, 3 s apart, then the
-  # finished, checked proof is sent anyway. Any other answer with a reason (a 409, an expired lease) is shown, and it goes on.
+  # HTTP 410 or an explicit withdrawal ends submission. Retry transient failures below.
   if [ -n "$lease" ]; then
     n=0; while :; do
       r=0; { curl -sS -m 10 -X POST -w '\n%{http_code}' "$DESK/beat?lease=$lease" 2>/dev/null || true; } | python3 -I -c 'import json,sys,re
@@ -450,8 +447,9 @@ body, _, code = sys.stdin.buffer.read().rpartition(b"\n"); code = code.decode("a
 try: d=json.loads(body)
 except Exception: d=None
 say = lambda: re.sub(r"[^ -~]", " ", str(d.get("error") or d.get("say") or "no reason given"))[:300]
-if isinstance(d, dict) and d.get("withdrawn") is True:
-    print("STOP: not submitted. " + re.sub(r"[^ -~]", " ", str(d.get("error") or "the step was withdrawn"))[:300], file=sys.stderr); sys.exit(3)
+if code == "410" or (isinstance(d, dict) and d.get("withdrawn") is True):
+    reason = d.get("error") if isinstance(d, dict) else None
+    print("STOP: not submitted. " + re.sub(r"[^ -~]", " ", str(reason or "the lease is gone"))[:300], file=sys.stderr); sys.exit(3)
 if not isinstance(d, dict) or not re.fullmatch(r"[1-4][0-9][0-9]", code): sys.exit(4)
 if code[0] != "2": print("the desk did not renew the lease (" + code + "): " + say() + "; sending the finished, checked proof anyway", file=sys.stderr)' || r=$?
       [ "$r" = 4 ] || { [ "$r" = 0 ] && break; exit 3; }
